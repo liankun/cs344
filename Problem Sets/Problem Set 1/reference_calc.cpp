@@ -1,5 +1,6 @@
 // for uchar4 struct
 #include <cuda_runtime.h>
+#include <stdio.h>
 
 void referenceCalculation(const uchar4* const rgbaImage,
                           unsigned char *const greyImage,
@@ -11,6 +12,7 @@ void referenceCalculation(const uchar4* const rgbaImage,
       uchar4 rgba = rgbaImage[r * numCols + c];
       float channelSum = .299f * rgba.x + .587f * rgba.y + .114f * rgba.z;
       greyImage[r * numCols + c] = channelSum;
+//      if(r * numCols + c==905) printf("ref pos %d val %f\n",r * numCols + c,channelSum);
     }
   }
 }
