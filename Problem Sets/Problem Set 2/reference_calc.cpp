@@ -2,6 +2,7 @@
 #include <cassert>
 // for uchar4 struct
 #include <cuda_runtime.h>
+#include <stdio.h>
 
 void channelConvolution(const unsigned char* const channel,
                         unsigned char* const channelBlurred,
@@ -14,19 +15,26 @@ void channelConvolution(const unsigned char* const channel,
   //For every pixel in the image
   for (int r = 0; r < (int)numRows; ++r) {
     for (int c = 0; c < (int)numCols; ++c) {
+      int index = r+c*numCols;
       float result = 0.f;
       //For every value in the filter around the pixel (c, r)
       for (int filter_r = -filterWidth/2; filter_r <= filterWidth/2; ++filter_r) {
         for (int filter_c = -filterWidth/2; filter_c <= filterWidth/2; ++filter_c) {
           //Find the global image position for this filter position
           //clamp to boundary of the image
-		  int image_r = std::min(std::max(r + filter_r, 0), static_cast<int>(numRows - 1));
+	  int image_r = std::min(std::max(r + filter_r, 0), static_cast<int>(numRows - 1));
           int image_c = std::min(std::max(c + filter_c, 0), static_cast<int>(numCols - 1));
 
           float image_value = static_cast<float>(channel[image_r * numCols + image_c]);
           float filter_value = filter[(filter_r + filterWidth/2) * filterWidth + filter_c + filterWidth/2];
 
           result += image_value * filter_value;
+	  
+//	  if(index==0){
+//	      printf("index %d filter x %d filter y %d image value %f filter value %f result %f\n",
+//			      index,filter_r,filter_r,image_value,filter_value,result);
+//	  }
+
         }
       }
 
@@ -65,6 +73,11 @@ void referenceCalculation(const uchar4* const rgbaImage, uchar4 *const outputIma
   for (size_t i = 0; i < numRows * numCols; ++i) {
     uchar4 rgba = make_uchar4(redBlurred[i], greenBlurred[i], blueBlurred[i], 255);
     outputImage[i] = rgba;
+//    if(i==0){
+//      printf("index: %d red: %d green %d blue %d\n",i,redBlurred[1],
+//		                                      greenBlurred[i],
+//						      blueBlurred[i]);
+//    }
   }
 
   delete[] red;

@@ -1,0 +1,3 @@
+Your code ran in: 1.736000 msecs.
+
+Your code ran in: 1.711232 msecs. (use stream)
