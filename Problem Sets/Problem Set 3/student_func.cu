@@ -81,6 +81,170 @@
 
 #include "utils.h"
 
+__global__ 
+void reduce_kernel(const float* const d_logLuminance,
+		   float* d_out,
+		   int numRows,int numCols,
+		   bool performMax=true){
+  extern __shared__ float sdata[];
+  int index = threadIdx.x+blockIdx.x*blockDim.x;
+  int tid = threadIdx.x;
+
+  if(index<numRows*numCols){
+    sdata[tid] = d_logLuminance[index];
+  }
+
+  __syncthreads();
+  
+  //last index of this block
+  int index_limit = blockDim.x*(blockIdx.x+1)-1;
+  //full length
+  size_t full = blockDim.x; 
+  //last block
+  if(index_limit>numRows*numCols-1) full = numRows*numCols-blockIdx.x*blockDim.x;
+  
+  size_t half = (full+1)/2;
+  while(half>0){
+    if(tid+half<full){
+      if(performMax){
+	if(sdata[tid]<sdata[tid+half]) sdata[tid] = sdata[tid+half];
+      }
+      else{
+        if(sdata[tid]>sdata[tid+half]) sdata[tid] = sdata[tid+half];
+      }
+    }
+
+    __syncthreads();
+
+    full = half;
+    half = (full+1)/2;
+
+    if(full==1) break;
+  } 
+
+
+  if(tid==0){
+    d_out[blockIdx.x] = sdata[0];
+  }
+}
+
+void reduce(const float* const d_logLuminance,
+		float* d_out,
+		int numRows,
+		int numCols,
+		bool performMax=true){
+//  int deviceId;
+//  int numberOfSMs;
+//  cudaGetDevice(&deviceId);
+//  cudaDeviceGetAttribute(&numberOfSMs,cudaDevAttrMultiProcessorCount,deviceId);
+  int threadPerBlock = 1024;
+  int blockNumber = numRows*numCols/threadPerBlock;
+  if(blockNumber*threadPerBlock<numRows*numCols) blockNumber+=1;
+
+  float* d_m_out;
+  checkCudaErrors(cudaMalloc(&d_m_out,sizeof(float)*blockNumber));
+  
+  reduce_kernel<<<blockNumber,threadPerBlock,sizeof(float)*threadPerBlock>>>(d_logLuminance,
+		                                                                 d_m_out,
+										 numRows,
+										 numCols,
+										 performMax);
+  checkCudaErrors(cudaDeviceSynchronize());
+  if(blockNumber>1024){
+    printf("blockNumber is too big %d\n",int(blockNumber));
+    return;
+  }
+  threadPerBlock = blockNumber; 
+  reduce_kernel<<<1,threadPerBlock,sizeof(float)*threadPerBlock>>>(d_m_out,
+	                                                               d_out,
+								       blockNumber,
+								       1,
+								       performMax);
+
+  checkCudaErrors(cudaDeviceSynchronize());
+  checkCudaErrors(cudaGetLastError()); 
+  checkCudaErrors(cudaFree(d_m_out));
+}
+
+//fill histogram
+__global__ 
+void fill_hist(const float* const d_logLuminance,
+	       unsigned int* const d_histo,
+	       const float logLumRange,
+	       const float logLumMin,
+	       const size_t numRows,
+	       const size_t numCols,
+	       const size_t numBins){
+  size_t index = threadIdx.x+blockIdx.x*blockDim.x;
+  size_t stride = blockDim.x*gridDim.x;
+  
+//  printf("index %d fill hist init\n",int(index)); 
+  for(size_t i=index;i<numBins;i+=stride){
+    d_histo[i]=0;
+  }
+  __syncthreads();
+ 
+//  printf("index %d perform fill ",int(index));
+  for(size_t i=index;i<numRows*numCols;i+=stride){
+    size_t bin = static_cast<unsigned int>((d_logLuminance[i] - logLumMin) / logLumRange * numBins);
+    if(bin>numBins-1) bin = numBins-1;
+    //d_histo[bin]+=1;
+    atomicAdd(&(d_histo[bin]),1);
+  }
+  __syncthreads();
+//  printf("index %d fill finished\n",int(index));
+}
+
+//exclusive scan Hills/Steels
+__global__ 
+void pre_sum_HS(const unsigned int* const d_histo,
+		unsigned int* d_cdf,
+		const size_t numBins,
+		const size_t nstride
+		){
+  int index = threadIdx.x+blockIdx.x*blockDim.x;
+  int stride = blockDim.x*gridDim.x;
+  int numberOfSum = 1;
+  unsigned int* pre_val = new unsigned int[nstride];
+  //Init
+//  printf("index %d init d_cdf\n",index);
+  for(size_t i=index;i<numBins;i+=stride){
+    if(i>0)d_cdf[i] = d_histo[i-1];
+    if(i>=2) pre_val[(i-index)/stride] = d_histo[i-2];
+  }
+  __syncthreads();
+  
+//  printf("index %d perform sum\n",index); 
+  while(numberOfSum<=numBins){
+    for(int i=index;i<numBins;i+=stride){
+      if(i-numberOfSum>0){
+	d_cdf[i]+=pre_val[(i-index)/stride];
+      }
+    }
+
+    __syncthreads();
+
+    numberOfSum+=numberOfSum;
+    for(int i=index;i<numBins;i+=stride){
+       if(i-numberOfSum>=0){
+	 pre_val[(i-index)/stride] = d_cdf[i-numberOfSum];
+//	 if(index==8) printf("pre index %d val %d\n",i-numberOfSum-1,d_cdf[i-numberOfSum-1]);
+       }
+      else pre_val[(i-index)/stride]=0;
+    }
+
+ 
+    __syncthreads();
+
+//   if(index==512){
+//      printf("index %d numberOfSum: %d cdf %d pre_val %d  pre index %d\n",index,numberOfSum,d_cdf[index],pre_val[0],index-numberOfSum);
+//    } 
+
+  }
+  
+  delete [] pre_val;
+}
+
 void your_histogram_and_prefixsum(const float* const d_logLuminance,
                                   unsigned int* const d_cdf,
                                   float &min_logLum,
@@ -99,6 +263,68 @@ void your_histogram_and_prefixsum(const float* const d_logLuminance,
     4) Perform an exclusive scan (prefix sum) on the histogram to get
        the cumulative distribution of luminance values (this should go in the
        incoming d_cdf pointer which already has been allocated for you)       */
+  //step one
+  float* d_min_logLum;
+  float* d_max_logLum;
+  checkCudaErrors(cudaMalloc(&d_min_logLum,sizeof(float)));
+  checkCudaErrors(cudaMalloc(&d_max_logLum,sizeof(float)));
 
+  reduce(d_logLuminance,d_max_logLum,numRows,numCols,true);
+  checkCudaErrors(cudaMemcpy(&max_logLum,d_max_logLum,sizeof(float),cudaMemcpyDeviceToHost));
+  
+  reduce(d_logLuminance,d_min_logLum,numRows,numCols,false);
+  checkCudaErrors(cudaMemcpy(&min_logLum,d_min_logLum,sizeof(float),cudaMemcpyDeviceToHost)); 
+  
+  //step two
+  float logLumRange =  max_logLum - min_logLum;
+  
+  printf("log lum min: %f log lum max: %f log lum range: %f\n",min_logLum,max_logLum,logLumRange);
+
+  //step three
+  unsigned int *d_histo;
+  checkCudaErrors(cudaMalloc(&d_histo,numBins*sizeof(unsigned int)));
+  int threadPerBlock = 1024;
+  int blockNumber = numRows*numCols/threadPerBlock+1;
+  //printf("fill histogram !\n");
+  fill_hist<<<blockNumber,threadPerBlock>>>(d_logLuminance,
+		                            d_histo,
+					    logLumRange,
+					    min_logLum,
+					    numRows,
+					    numCols,
+					    numBins
+					    );
+  checkCudaErrors(cudaDeviceSynchronize()); 
+  checkCudaErrors(cudaGetLastError());
+  
+
+//  printf("GPU histo at position 4 %d\n",d_histo[4]);
+  //step four
+  //exclusive scan
+  //printf("begin pre sum !\n");
+  size_t nstride = numBins/(blockNumber*threadPerBlock)+1;
+  blockNumber = numBins/threadPerBlock+1;
+  pre_sum_HS<<<blockNumber,threadPerBlock>>>(d_histo,
+		                             d_cdf,
+					     numBins,
+					     nstride);
+
+  unsigned int* h_histo = (unsigned int*)malloc(sizeof(unsigned int)*numBins);
+  unsigned int* h_cdf = (unsigned int*)malloc(sizeof(unsigned int)*numBins);
+
+  checkCudaErrors(cudaMemcpy(h_histo,d_histo,sizeof(unsigned int)*numBins,cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(h_cdf,d_cdf,sizeof(unsigned int)*numBins,cudaMemcpyDeviceToHost));
+
+  printf("GPU histo index 4 value %d\n",(int)h_histo[4]);
+  printf("GPU cdf index 4 value %d\n",(int)h_cdf[4]);
+  
+  printf("GPU h_histo and cdf:\n");
+//  for(size_t i=0;i<numBins;i++){
+//    printf("index %d count %d cdf %d\n",i,h_histo[i],h_cdf[i]);
+//  }
+
+  checkCudaErrors(cudaDeviceSynchronize()); 
+  checkCudaErrors(cudaGetLastError());
+  checkCudaErrors(cudaFree(d_histo));
 
 }

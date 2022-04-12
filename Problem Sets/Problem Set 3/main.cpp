@@ -40,9 +40,9 @@ int main(int argc, char **argv) {
   std::string input_file;
   std::string output_file;
   std::string reference_file;
-  double perPixelError = 0.0;
-  double globalError   = 0.0;
-  bool useEpsCheck = false;
+  double perPixelError = 1.0;
+  double globalError   = 1.0;
+  bool useEpsCheck = true;
 
   switch (argc)
   {
@@ -105,12 +105,13 @@ int main(int argc, char **argv) {
 
   for (size_t i = 1; i < numCols * numRows; ++i) {
 	min_logLum = std::min(h_luminance[i], min_logLum);
-    max_logLum = std::max(h_luminance[i], max_logLum);
+    	max_logLum = std::max(h_luminance[i], max_logLum);
   }
 
   referenceCalculation(h_luminance, h_cdf, numRows, numCols, numBins, min_logLum, max_logLum);
 
   checkCudaErrors(cudaMemcpy(d_cdf, h_cdf, sizeof(unsigned int) * numBins, cudaMemcpyHostToDevice));
+ 
 
   //check results and output the tone-mapped image
   postProcess(reference_file, numRows, numCols, min_logLum, max_logLum);
