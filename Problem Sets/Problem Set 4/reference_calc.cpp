@@ -1,6 +1,7 @@
 #include <algorithm>
 // For memset
 #include <cstring>
+#include <stdio.h>
 
 void reference_calculation(unsigned int* inputVals,
                            unsigned int* inputPos,
@@ -10,6 +11,9 @@ void reference_calculation(unsigned int* inputVals,
 {
   const int numBits = 1;
   const int numBins = 1 << numBits;
+  
+//  printf("numBins %d\n",numBins);
+//  printf("number of Elements: %ld\n",numElems);
 
   unsigned int *binHistogram = new unsigned int[numBins];
   unsigned int *binScan      = new unsigned int[numBins];
@@ -24,6 +28,8 @@ void reference_calculation(unsigned int* inputVals,
   for (unsigned int i = 0; i < 8 * sizeof(unsigned int); i += numBits) {
     unsigned int mask = (numBins - 1) << i;
 
+//    printf("check bit pos %d\n",i);
+
     memset(binHistogram, 0, sizeof(unsigned int) * numBins); //zero out the bins
     memset(binScan, 0, sizeof(unsigned int) * numBins); //zero out the bins
 
@@ -33,11 +39,15 @@ void reference_calculation(unsigned int* inputVals,
       binHistogram[bin]++;
     }
 
+//    printf("count one: %d count zero %d\n",binHistogram[0],binHistogram[1]);
+
     //perform exclusive prefix sum (scan) on binHistogram to get starting
     //location for each bin
     for (unsigned int j = 1; j < numBins; ++j) {
       binScan[j] = binScan[j - 1] + binHistogram[j - 1];
     }
+    
+//    printf("binScan zero: %d binScan one %d\n",binScan[0],binScan[1]);
 
     //Gather everything into the correct location
     //need to move vals and positions
@@ -45,6 +55,9 @@ void reference_calculation(unsigned int* inputVals,
       unsigned int bin = (vals_src[j] & mask) >> i;
       vals_dst[binScan[bin]] = vals_src[j];
       pos_dst[binScan[bin]]  = pos_src[j];
+//      if(j<10){
+//        printf("reference old pos: %d new pos %d\n",j,binScan[bin]); 
+//      }
       binScan[bin]++;
     }
 
