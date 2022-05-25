@@ -47,7 +47,7 @@ int main(void)
   unsigned int mean = rand() % 100 + 462;
 
   //Output mean so that grading can happen with the same inputs
-  std::cout << mean << std::endl;
+  std::cout <<"Mean "<<mean << std::endl;
 
   thrust::minstd_rand rng;
 

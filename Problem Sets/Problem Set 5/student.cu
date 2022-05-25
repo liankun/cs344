@@ -38,6 +38,19 @@ void yourHisto(const unsigned int* const vals, //INPUT
   //Although we provide only one kernel skeleton,
   //feel free to use more if it will help you
   //write faster code
+  extern __shared__ unsigned int local_hist[];
+
+  int idx = threadIdx.x+blockIdx.x*blockDim.x;
+  int stride = blockDim.x*gridDim.x;
+  int tid = threadIdx.x;
+  local_hist[tid]=0;
+  __syncthreads();
+
+  for(int i = idx;i<numVals;i+=stride){ 
+     atomicAdd(&local_hist[vals[i]],1);
+  }
+  __syncthreads();
+  atomicAdd(&histo[tid],local_hist[tid]);
 }
 
 void computeHistogram(const unsigned int* const d_vals, //INPUT
@@ -46,9 +59,15 @@ void computeHistogram(const unsigned int* const d_vals, //INPUT
                       const unsigned int numElems)
 {
   //TODO Launch the yourHisto kernel
+  int numThreads=1024;
+  int numBlocks = 20*4;
+//  int nloops = numElems/(numBlocks*numThreads);
 
+
+  yourHisto<<<numBlocks,numThreads,numThreads*sizeof(unsigned int)>>>(d_vals,d_histo,numElems);
   //if you want to use/launch more than one kernel,
   //feel free
+  
 
   cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 }
